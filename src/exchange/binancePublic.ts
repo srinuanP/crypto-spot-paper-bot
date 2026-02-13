@@ -1,41 +1,85 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Candle } from '../types.js';
 
 const BASE_URL = 'https://api.binance.com';
 const CACHE_DIR = path.resolve('data-cache');
-const MIN_REQUEST_INTERVAL_MS = 250;
-let lastRequestAt = 0;
+const DEFAULT_TIMEOUT_MS = 8_000;
+const RETRY_BACKOFF_BASE_MS = 300;
+const MAX_BACKOFF_MS = 5_000;
+const ERROR_LOG_COOLDOWN_MS = 15_000;
+const endpointRateLimitMs: Record<string, number> = {
+  klines: 350,
+  price: 200
+};
+const endpointLastRequestAt = new Map<string, number>();
+const lastErrorLogAt = new Map<string, number>();
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function rateLimitWait() {
-  const elapsed = Date.now() - lastRequestAt;
-  if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-    await sleep(MIN_REQUEST_INTERVAL_MS - elapsed);
+function logNetworkError(key: string, message: string) {
+  const now = Date.now();
+  const lastLog = lastErrorLogAt.get(key) ?? 0;
+  if (now - lastLog >= ERROR_LOG_COOLDOWN_MS) {
+    console.warn(`[binancePublic] ${message}`);
+    lastErrorLogAt.set(key, now);
   }
-  lastRequestAt = Date.now();
 }
 
-async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
+async function rateLimitWait(endpoint: string) {
+  const minInterval = endpointRateLimitMs[endpoint] ?? 250;
+  const lastAt = endpointLastRequestAt.get(endpoint) ?? 0;
+  const elapsed = Date.now() - lastAt;
+  if (elapsed < minInterval) {
+    await sleep(minInterval - elapsed);
+  }
+  endpointLastRequestAt.set(endpoint, Date.now());
+}
+
+type RequestOptions = {
+  endpoint: string;
+  retries?: number;
+  timeoutMs?: number;
+};
+
+async function fetchWithRetry(url: string, options: RequestOptions): Promise<Response> {
+  const retries = options.retries ?? 3;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let attempt = 0;
+  let lastError: Error | null = null;
   while (attempt <= retries) {
-    await rateLimitWait();
+    await rateLimitWait(options.endpoint);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
       if (response.ok) return response;
       if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-        throw new Error(`Binance client error ${response.status}`);
+        const text = await response.text();
+        throw new Error(`Binance client error ${response.status}: ${text}`);
       }
+      lastError = new Error(`Binance retryable status ${response.status}`);
     } catch (error) {
-      if (attempt === retries) throw error;
+      clearTimeout(timeout);
+      if (error instanceof Error && error.message.startsWith('Binance client error')) {
+        throw error;
+      }
+      if (error instanceof Error) {
+        lastError = error;
+      } else {
+        lastError = new Error('Unknown fetch error');
+      }
     }
+    if (attempt === retries) break;
     const backoff = 300 * 2 ** attempt;
-    await sleep(backoff);
+    const waitMs = Math.min(MAX_BACKOFF_MS, Math.max(RETRY_BACKOFF_BASE_MS, backoff));
+    logNetworkError(options.endpoint, `retry ${attempt + 1}/${retries} in ${waitMs}ms for ${url}`);
+    await sleep(waitMs);
     attempt += 1;
   }
-  throw new Error(`Unable to fetch after ${retries + 1} attempts: ${url}`);
+  throw lastError ?? new Error(`Unable to fetch after ${retries + 1} attempts: ${url}`);
 }
 
 function buildSyntheticCandles(limit: number): Candle[] {
@@ -65,19 +109,46 @@ function klinesCacheFile(symbol: string, interval: string, limit: number, startT
   return path.join(CACHE_DIR, file);
 }
 
+type FetchKlinesOptions = {
+  cacheTtlMs?: number;
+  retries?: number;
+  timeoutMs?: number;
+};
+
+async function readCacheIfFresh(cachePath: string, cacheTtlMs: number): Promise<Candle[] | null> {
+  if (!existsSync(cachePath)) return null;
+  if (cacheTtlMs <= 0) return null;
+  const fileStat = await stat(cachePath);
+  if (Date.now() - fileStat.mtimeMs > cacheTtlMs) return null;
+  const text = await readFile(cachePath, 'utf-8');
+  return JSON.parse(text) as Candle[];
+}
+
+async function readCacheAny(cachePath: string): Promise<Candle[] | null> {
+  if (!existsSync(cachePath)) return null;
+  try {
+    const text = await readFile(cachePath, 'utf-8');
+    return JSON.parse(text) as Candle[];
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchKlines(
   symbol: string,
   interval: string,
   limit: number,
   startTime?: number,
-  endTime?: number
+  endTime?: number,
+  options: FetchKlinesOptions = {}
 ): Promise<Candle[]> {
   await mkdir(CACHE_DIR, { recursive: true });
   const cachePath = klinesCacheFile(symbol, interval, limit, startTime, endTime);
+  const cacheTtlMs = options.cacheTtlMs ?? 60_000;
 
-  if (existsSync(cachePath)) {
-    const text = await readFile(cachePath, 'utf-8');
-    return JSON.parse(text) as Candle[];
+  const freshCache = await readCacheIfFresh(cachePath, cacheTtlMs);
+  if (freshCache) {
+    return freshCache;
   }
 
   const query = new URLSearchParams({
@@ -92,7 +163,11 @@ export async function fetchKlines(
   const url = `${BASE_URL}/api/v3/klines?${query.toString()}`;
   let candles: Candle[];
   try {
-    const response = await fetchWithRetry(url);
+    const response = await fetchWithRetry(url, {
+      endpoint: 'klines',
+      retries: options.retries,
+      timeoutMs: options.timeoutMs
+    });
     const rows = (await response.json()) as Array<[number, string, string, string, string, string]>;
 
     candles = rows.map((row) => ({
@@ -103,23 +178,38 @@ export async function fetchKlines(
       c: Number(row[4]),
       v: Number(row[5])
     }));
-  } catch {
+    await writeFile(cachePath, JSON.stringify(candles));
+    return candles;
+  } catch (error) {
+    const fallbackCache = await readCacheAny(cachePath);
+    if (fallbackCache) {
+      logNetworkError('klines-fallback', `using stale cache for ${symbol} ${interval} after fetch error`);
+      return fallbackCache;
+    }
+    logNetworkError('klines-synthetic', `using synthetic candles for ${symbol} ${interval}`);
     candles = buildSyntheticCandles(limit);
+    await writeFile(cachePath, JSON.stringify(candles));
+    if (error instanceof Error) {
+      logNetworkError('klines-error', `last error: ${error.message}`);
+    }
+    return candles;
   }
-
-  await writeFile(cachePath, JSON.stringify(candles));
-  return candles;
 }
 
 export async function fetchPrice(symbol: string): Promise<number> {
   const query = new URLSearchParams({ symbol });
   const url = `${BASE_URL}/api/v3/ticker/price?${query.toString()}`;
   try {
-    const response = await fetchWithRetry(url);
+    const response = await fetchWithRetry(url, { endpoint: 'price' });
     const data = (await response.json()) as { price: string };
     return Number(data.price);
-  } catch {
-    const candles = await fetchKlines(symbol, '1m', 2);
+  } catch (error) {
+    if (error instanceof Error) {
+      logNetworkError('price-error', `fallback to klines for ${symbol}: ${error.message}`);
+    } else {
+      logNetworkError('price-error', `fallback to klines for ${symbol}`);
+    }
+    const candles = await fetchKlines(symbol, '1m', 2, undefined, undefined, { cacheTtlMs: 0 });
     return candles.at(-1)?.c ?? 0;
   }
 }
