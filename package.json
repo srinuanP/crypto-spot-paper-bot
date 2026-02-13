@@ -1,0 +1,21 @@
+{
+  "name": "crypto-spot-paper-bot",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noCheck",
+    "dev": "npm run build --silent && node dist/src/cli/dev.js",
+    "backtest": "npm run build --silent && node dist/src/cli/backtest.js",
+    "paper": "npm run build --silent && node dist/src/cli/paper.js",
+    "journal": "npm run build --silent && node dist/src/journal/summarize.js",
+    "test": "npm run build --silent && node --test dist/tests/**/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit --noCheck",
+    "testnet:ping": "npm run build --silent && node dist/src/cli/testnet.js ping",
+    "testnet:time": "npm run build --silent && node dist/src/cli/testnet.js time",
+    "testnet:account": "npm run build --silent && node dist/src/cli/testnet.js account",
+    "testnet:order:test": "npm run build --silent && node dist/src/cli/testnet.js order:test",
+    "testnet:order:live": "npm run build --silent && node dist/src/cli/testnet.js order:live",
+    "testnet:ws:userdata": "npm run build --silent && node dist/src/cli/testnet.js ws:userdata"
+  }
+}
