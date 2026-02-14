@@ -6,3 +6,4 @@ data-cache
 reports
 paper-log.jsonl
 paper-state.json
+*.tsbuildinfo

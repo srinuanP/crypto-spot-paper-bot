@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Crypto Spot Paper Bot Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css?v=20260214-ui2" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="panel topbar" role="banner">
+        <div class="brand">
+          <p class="eyebrow">CRYPTO SPOT PAPER BOT</p>
+          <h1>Local Research Dashboard</h1>
+          <p class="subtitle">
+            หน้าจอสำหรับติดตาม Backtest, Paper Trading และ Journal แบบเรียลไทม์ในเครื่อง
+          </p>
+        </div>
+        <div class="topbar-right">
+          <div class="status-row">
+            <span id="modeBadge" class="badge badge-neutral">Mode: PAPER</span>
+            <span id="validateBadge" class="badge badge-warning">Validate-only</span>
+            <span id="sseBadge" class="badge badge-neutral">SSE: Connecting</span>
+          </div>
+          <div class="toolbar-row">
+            <button id="themeToggle" class="btn btn-ghost" aria-label="สลับธีม">Dark</button>
+            <button id="refreshBtn" class="btn btn-secondary" aria-label="รีเฟรชข้อมูล">
+              Refresh
+            </button>
+            <label class="switch" for="autoRefreshToggle" aria-label="เปิดปิดการรีเฟรชอัตโนมัติ">
+              <input id="autoRefreshToggle" type="checkbox" checked />
+              <span>Auto refresh</span>
+            </label>
+            <button id="openLogDrawerBtn" class="btn btn-primary" aria-label="เปิดหน้าต่าง Live Log">
+              Live Log
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section class="panel quick-actions-panel panel-collapsible">
+        <div class="panel-head">
+          <h2>Quick Actions</h2>
+          <div class="panel-head-actions">
+            <span id="healthBadge" class="badge badge-neutral">Health: Checking</span>
+            <button class="btn btn-ghost panel-toggle" data-panel-toggle aria-expanded="true" aria-label="พับหรือขยาย quick actions">
+              Collapse
+            </button>
+          </div>
+        </div>
+        <div class="quick-actions-grid">
+          <button
+            class="quick-action"
+            data-copy="npm run backtest -- --symbol BTCUSDT --interval 15m --limit 1000 --strategy smaCross"
+            aria-label="คัดลอกคำสั่ง backtest"
+          >
+            Copy backtest command
+          </button>
+          <button
+            class="quick-action"
+            data-copy="npm run paper -- --symbol BTCUSDT --interval 1m --strategy smaCross --pollMs 5000"
+            aria-label="คัดลอกคำสั่ง paper"
+          >
+            Copy paper command
+          </button>
+          <button
+            class="quick-action"
+            data-copy="npm run journal -- --input paper-log.jsonl"
+            aria-label="คัดลอกคำสั่ง journal"
+          >
+            Copy journal command
+          </button>
+        </div>
+        <p class="safety-banner">Dashboard นี้เพื่อการเรียนรู้ ไม่ส่งออเดอร์จริง</p>
+      </section>
+
+      <main class="content-grid">
+        <section id="summaryPanel" class="panel summary-panel panel-collapsible">
+          <div class="panel-head">
+            <div>
+              <h2>Performance Summary</h2>
+              <p class="panel-subtext">ข้อมูลจาก reports/latest.json</p>
+            </div>
+            <div class="panel-head-actions">
+              <span id="reportBadge" class="badge badge-neutral">Report: Loading</span>
+              <button class="btn btn-ghost panel-toggle" data-panel-toggle aria-expanded="true" aria-label="พับหรือขยาย summary panel">
+                Collapse
+              </button>
+            </div>
+          </div>
+
+          <div id="summarySkeleton" class="skeleton-grid">
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+          </div>
+
+          <div id="summaryCards" class="summary-grid hidden"></div>
+
+          <div id="summaryEmpty" class="empty-state hidden">
+            <h3>ยังไม่พบผล Backtest</h3>
+            <p>ให้รันคำสั่งนี้ก่อน แล้วค่อย refresh dashboard</p>
+            <code>npm run backtest -- --symbol BTCUSDT --interval 15m --limit 1000 --strategy smaCross</code>
+          </div>
+        </section>
+
+        <section id="chartsPanel" class="panel charts-panel panel-collapsible">
+          <div class="panel-head">
+            <div>
+              <h2>Equity & Drawdown</h2>
+              <p class="panel-subtext">คำนวณ drawdown อัตโนมัติจาก equity curve</p>
+            </div>
+            <button class="btn btn-ghost panel-toggle" data-panel-toggle aria-expanded="true" aria-label="พับหรือขยาย charts panel">
+              Collapse
+            </button>
+          </div>
+          <div class="chart-grid">
+            <article class="chart-card">
+              <div class="chart-head">
+                <h3>Equity Curve</h3>
+                <span class="chip chip-accent">Equity</span>
+              </div>
+              <div class="chart-wrap">
+                <canvas id="equityCanvas" height="280" aria-label="กราฟ Equity Curve"></canvas>
+                <div id="equityTooltip" class="chart-tooltip hidden"></div>
+              </div>
+            </article>
+
+            <article class="chart-card">
+              <div class="chart-head">
+                <h3>Drawdown Curve</h3>
+                <span class="chip chip-danger">Drawdown</span>
+              </div>
+              <div class="chart-wrap">
+                <canvas id="drawdownCanvas" height="240" aria-label="กราฟ Drawdown"></canvas>
+                <div id="drawdownTooltip" class="chart-tooltip hidden"></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="tradesPanel" class="panel trades-panel panel-collapsible">
+          <div class="panel-head">
+            <div>
+              <h2>Trades</h2>
+              <p id="tradesMeta" class="panel-subtext">กำลังโหลดข้อมูลเทรด...</p>
+            </div>
+            <button class="btn btn-ghost panel-toggle" data-panel-toggle aria-expanded="true" aria-label="พับหรือขยาย trades panel">
+              Collapse
+            </button>
+          </div>
+
+          <div class="toolbar-grid">
+            <label class="field">
+              <span>Search</span>
+              <input id="tradeSearch" type="search" placeholder="symbol / strategy / reason" aria-label="ค้นหารายการเทรด" />
+            </label>
+            <label class="field">
+              <span>Symbol</span>
+              <select id="filterSymbol" aria-label="กรองตาม symbol">
+                <option value="">All</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Strategy</span>
+              <select id="filterStrategy" aria-label="กรองตาม strategy">
+                <option value="">All</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Side</span>
+              <select id="filterSide" aria-label="กรองตาม side">
+                <option value="">All</option>
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Sort</span>
+              <select id="sortTrades" aria-label="เรียงลำดับรายการเทรด">
+                <option value="timeDesc">Time (newest)</option>
+                <option value="timeAsc">Time (oldest)</option>
+                <option value="pnlDesc">PnL (high to low)</option>
+                <option value="pnlAsc">PnL (low to high)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Rows/Page</span>
+              <select id="pageSize" aria-label="จำนวนแถวต่อหน้า">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+              </select>
+            </label>
+            <button id="clearFiltersBtn" class="btn btn-ghost field-btn" aria-label="ล้างตัวกรอง">
+              Clear
+            </button>
+          </div>
+
+          <div class="table-shell" role="region" aria-label="ตารางรายการเทรด">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Symbol</th>
+                  <th>Strategy</th>
+                  <th>Side</th>
+                  <th>Price</th>
+                  <th>Qty</th>
+                  <th>PnL</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody id="tradesBody"></tbody>
+            </table>
+          </div>
+
+          <div class="pagination">
+            <button id="prevPageBtn" class="btn btn-ghost" aria-label="หน้าก่อนหน้า">Prev</button>
+            <span id="pageInfo">Page 1/1</span>
+            <button id="nextPageBtn" class="btn btn-ghost" aria-label="หน้าถัดไป">Next</button>
+          </div>
+        </section>
+
+        <section id="journalPanel" class="panel journal-panel panel-collapsible">
+          <div class="panel-head">
+            <div>
+              <h2>Daily Journal</h2>
+              <p class="panel-subtext">ข้อมูลจาก journal/latest.json หรือ journal/latest.md</p>
+            </div>
+            <div class="panel-head-actions">
+              <span id="journalBadge" class="badge badge-neutral">Journal: Loading</span>
+              <button class="btn btn-ghost panel-toggle" data-panel-toggle aria-expanded="true" aria-label="พับหรือขยาย journal panel">
+                Collapse
+              </button>
+            </div>
+          </div>
+          <pre id="journalView" class="journal-view">กำลังโหลด...</pre>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p id="lastUpdatedText">Last updated: -</p>
+      </footer>
+    </div>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+    <div id="logDrawer" class="drawer" aria-hidden="true">
+      <button id="logDrawerBackdrop" class="drawer-backdrop" aria-label="ปิดหน้าต่าง live log"></button>
+      <aside class="drawer-panel" role="dialog" aria-label="Live paper log panel">
+        <div class="drawer-head">
+          <h2>Live Paper Log</h2>
+          <div class="drawer-actions">
+            <button id="pauseLogBtn" class="btn btn-ghost" aria-label="พักหรือเริ่ม log">Pause</button>
+            <button id="clearLogBtn" class="btn btn-ghost" aria-label="ล้างข้อความ log">Clear</button>
+            <button id="closeLogDrawerBtn" class="btn btn-secondary" aria-label="ปิดหน้าต่าง live log">
+              Close
+            </button>
+          </div>
+        </div>
+        <div class="drawer-meta">
+          <span id="paperBadge" class="badge badge-neutral">Paper: Waiting</span>
+          <span id="paperMessage" class="muted-text"></span>
+        </div>
+        <pre id="liveLog" class="live-log" tabindex="0"></pre>
+      </aside>
+    </div>
+
+    <script src="/app.js?v=20260214-ui2"></script>
+  </body>
+</html>

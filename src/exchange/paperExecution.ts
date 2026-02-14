@@ -1,7 +1,11 @@
 import type { ExecutionClient, ExecutionResponse, OrderRequest } from './types.js';
 
 export class PaperExecutionClient implements ExecutionClient {
-  async placeOrder(order: OrderRequest): Promise<ExecutionResponse> {
+  async placeOrder(order: OrderRequest, options?: { live?: boolean; cliAck?: string }): Promise<ExecutionResponse> {
+    if (options?.live) {
+      throw new Error('Safety A/B reject: EXECUTION_MODE is paper. Set EXECUTION_MODE=testnet for any live testnet order.');
+    }
+
     return {
       ok: true,
       mode: 'paper',

@@ -113,6 +113,7 @@ type FetchKlinesOptions = {
   cacheTtlMs?: number;
   retries?: number;
   timeoutMs?: number;
+  fallbackMode?: 'synthetic' | 'stale' | 'none';
 };
 
 async function readCacheIfFresh(cachePath: string, cacheTtlMs: number): Promise<Candle[] | null> {
@@ -145,6 +146,7 @@ export async function fetchKlines(
   await mkdir(CACHE_DIR, { recursive: true });
   const cachePath = klinesCacheFile(symbol, interval, limit, startTime, endTime);
   const cacheTtlMs = options.cacheTtlMs ?? 60_000;
+  const fallbackMode = options.fallbackMode ?? 'synthetic';
 
   const freshCache = await readCacheIfFresh(cachePath, cacheTtlMs);
   if (freshCache) {
@@ -181,18 +183,29 @@ export async function fetchKlines(
     await writeFile(cachePath, JSON.stringify(candles));
     return candles;
   } catch (error) {
-    const fallbackCache = await readCacheAny(cachePath);
-    if (fallbackCache) {
-      logNetworkError('klines-fallback', `using stale cache for ${symbol} ${interval} after fetch error`);
-      return fallbackCache;
+    if (fallbackMode !== 'none') {
+      const fallbackCache = await readCacheAny(cachePath);
+      if (fallbackCache) {
+        logNetworkError('klines-fallback', `using stale cache for ${symbol} ${interval} after fetch error`);
+        return fallbackCache;
+      }
     }
-    logNetworkError('klines-synthetic', `using synthetic candles for ${symbol} ${interval}`);
-    candles = buildSyntheticCandles(limit);
-    await writeFile(cachePath, JSON.stringify(candles));
+
+    if (fallbackMode === 'synthetic') {
+      logNetworkError('klines-synthetic', `using synthetic candles for ${symbol} ${interval}`);
+      candles = buildSyntheticCandles(limit);
+      await writeFile(cachePath, JSON.stringify(candles));
+      if (error instanceof Error) {
+        logNetworkError('klines-error', `last error: ${error.message}`);
+      }
+      return candles;
+    }
+
     if (error instanceof Error) {
-      logNetworkError('klines-error', `last error: ${error.message}`);
+      logNetworkError('klines-error', `fetch failed without fallback for ${symbol} ${interval}: ${error.message}`);
+      throw error;
     }
-    return candles;
+    throw new Error(`Failed to fetch klines for ${symbol} ${interval}`);
   }
 }
 

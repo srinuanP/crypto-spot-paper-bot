@@ -1,5 +1,4 @@
-import { randomInt } from 'node:crypto';
-import { buildQuery, signQuery } from './binanceTestnetRest.js';
+import { buildQuery, sign } from './binanceTestnetRest.js';
 import { BinanceWsApiClient } from './binanceWsApi.js';
 import type { UserDataClient } from './types.js';
 
@@ -12,81 +11,103 @@ type Config = {
 
 export class BinanceUserDataStreamClient implements UserDataClient {
   private readonly config: Config;
-  private wsClient: BinanceWsApiClient;
+  private readonly wsClient: BinanceWsApiClient;
+  private readonly eventHandlers = new Set<(event: unknown) => void>();
   private running = false;
   private subscriptionId?: number;
-  private reconnectAttempt = 0;
+  private disposeReconnect?: () => void;
+  private disposeEvent?: () => void;
+  private disposeStartHandler?: () => void;
 
   constructor(config: Config) {
     this.config = config;
     this.wsClient = new BinanceWsApiClient(config.wsUrl);
   }
 
-  private signParams(): { apiKey: string; timestamp: number; signature: string } {
+  private ensureCredentials(): void {
+    if (!this.config.apiKey || !this.config.apiSecret) {
+      throw new Error('Missing Binance credentials: set BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET');
+    }
+  }
+
+  private signedParams(): { apiKey: string; timestamp: number; signature: string } {
     const params = {
       apiKey: this.config.apiKey,
       timestamp: this.config.getTimestamp()
     };
-    const payload = buildQuery(params);
+    const signature = sign(buildQuery(params), this.config.apiSecret);
     return {
       ...params,
-      signature: signQuery(this.config.apiSecret, payload)
+      signature
     };
   }
 
-  private async subscribe() {
-    const result = (await this.wsClient.request('userDataStream.subscribe.signature', this.signParams())) as { subscriptionId?: number };
-    if (typeof result?.subscriptionId !== 'number') throw new Error('Missing subscriptionId in response');
-    this.subscriptionId = result.subscriptionId;
-    this.reconnectAttempt = 0;
+  private emit(event: unknown): void {
+    this.eventHandlers.forEach((handler) => handler(event));
   }
 
-  private nextBackoffMs() {
-    const base = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempt);
-    const jitter = randomInt(0, 300);
-    this.reconnectAttempt += 1;
-    return base + jitter;
+  onEvent(handler: (event: unknown) => void): () => void {
+    this.eventHandlers.add(handler);
+    return () => this.eventHandlers.delete(handler);
+  }
+
+  async subscribeSignature(): Promise<number> {
+    this.ensureCredentials();
+    const result = (await this.wsClient.request('userDataStream.subscribe.signature', this.signedParams())) as {
+      subscriptionId?: number;
+    };
+
+    if (typeof result?.subscriptionId !== 'number') {
+      throw new Error('Missing subscriptionId from userDataStream.subscribe.signature');
+    }
+
+    this.subscriptionId = result.subscriptionId;
+    return result.subscriptionId;
+  }
+
+  async unsubscribe(subscriptionId?: number): Promise<void> {
+    const params = typeof subscriptionId === 'number'
+      ? { subscriptionId }
+      : (typeof this.subscriptionId === 'number' ? { subscriptionId: this.subscriptionId } : {});
+
+    await this.wsClient.request('userDataStream.unsubscribe', params);
+    this.subscriptionId = undefined;
   }
 
   async start(onEvent: (event: unknown) => void): Promise<void> {
+    if (this.running) return;
     this.running = true;
+    this.ensureCredentials();
+    this.disposeStartHandler = this.onEvent(onEvent);
 
-    while (this.running) {
-      try {
-        await this.wsClient.connect();
-        this.wsClient.onEvent(onEvent);
-        await this.subscribe();
+    this.disposeEvent = this.wsClient.onEvent((event) => this.emit(event));
+    this.disposeReconnect = this.wsClient.onReconnect(async () => {
+      if (!this.running) return;
+      await this.subscribeSignature();
+      this.emit({ event: 'USER_DATA_RESUBSCRIBED', subscriptionId: this.subscriptionId });
+    });
 
-        await new Promise<void>((resolve) => {
-          const poll = setInterval(() => {
-            const anyWs = this.wsClient as unknown as { ws?: WebSocket | null };
-            if (!this.running || !anyWs.ws || anyWs.ws.readyState !== WebSocket.OPEN) {
-              clearInterval(poll);
-              resolve();
-            }
-          }, 500);
-        });
-      } catch (error) {
-        if (!this.running) break;
-        console.error(`UserData WS reconnecting: ${(error as Error).message}`);
-        await new Promise((resolve) => setTimeout(resolve, this.nextBackoffMs()));
-        this.wsClient.close();
-        this.wsClient = new BinanceWsApiClient(this.config.wsUrl);
-      }
-    }
+    await this.wsClient.connect();
+    await this.subscribeSignature();
+    this.emit({ event: 'USER_DATA_SUBSCRIBED', subscriptionId: this.subscriptionId });
   }
 
   async stop(): Promise<void> {
+    if (!this.running) return;
     this.running = false;
+
     try {
-      if (typeof this.subscriptionId === 'number') {
-        await this.wsClient.request('userDataStream.unsubscribe', { subscriptionId: this.subscriptionId });
-      } else {
-        await this.wsClient.request('userDataStream.unsubscribe', {});
-      }
+      await this.unsubscribe();
     } catch {
-      // ignore cleanup errors
+      // best effort cleanup
     }
+
+    this.disposeReconnect?.();
+    this.disposeReconnect = undefined;
+    this.disposeEvent?.();
+    this.disposeEvent = undefined;
+    this.disposeStartHandler?.();
+    this.disposeStartHandler = undefined;
     this.wsClient.close();
   }
 }

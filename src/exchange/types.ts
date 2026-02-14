@@ -26,6 +26,7 @@ export interface ExecutionClient {
 }
 
 export interface UserDataClient {
+  onEvent?(handler: (event: unknown) => void): () => void;
   start(onEvent: (event: unknown) => void): Promise<void>;
   stop(): Promise<void>;
 }
