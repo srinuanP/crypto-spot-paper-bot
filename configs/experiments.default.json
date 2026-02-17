@@ -1,0 +1,14 @@
+{
+  "symbols": ["BTCUSDT", "ETHUSDT"],
+  "intervals": ["15m", "1h"],
+  "strategies": [
+    { "name": "smaCross", "params": { "short": 20, "long": 50 } },
+    { "name": "rsiMeanReversion", "params": { "rsiPeriod": 14, "buyBelow": 30, "sellAbove": 70 } }
+  ],
+  "limit": 2000,
+  "feeBps": 10,
+  "slippageBps": 5,
+  "initialCapital": 10000,
+  "riskPerTradePct": 0.1,
+  "concurrency": 3
+}

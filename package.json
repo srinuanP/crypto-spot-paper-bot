@@ -1,0 +1,32 @@
+{
+  "name": "crypto-spot-paper-bot",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noCheck",
+    "dev": "npm run build --silent && node dist/src/cli/dev.js",
+    "backtest": "npm run build --silent && node dist/src/cli/backtest.js",
+    "paper": "npm run build --silent && node dist/src/cli/paper.js",
+    "journal": "npm run build --silent && node dist/src/journal/summarize.js",
+    "dashboard": "npm run dashboard:server",
+    "dashboard:server": "npm run build --silent && node dist/src/dashboard/server.js",
+    "dashboard:ui": "npm --prefix apps/dashboard-ui run dev",
+    "dashboard:build": "npm --prefix apps/dashboard-ui run build",
+    "dashboard:preview": "npm --prefix apps/dashboard-ui run preview",
+    "experiments": "npm run build --silent && node dist/src/cli/experiments.js",
+    "experiments:compare": "npm run build --silent && node dist/src/cli/experimentsCompare.js",
+    "test": "npm run build --silent && node --test dist/tests",
+    "lint": "tsc -p tsconfig.json --noEmit --noCheck",
+    "testnet:ping": "npm run build --silent && node dist/src/cli/testnet.js ping",
+    "testnet:time": "npm run build --silent && node dist/src/cli/testnet.js time",
+    "testnet:account": "npm run build --silent && node dist/src/cli/testnet.js account",
+    "testnet:order:test": "npm run build --silent && node dist/src/cli/testnet.js order:test",
+    "testnet:order:live": "npm run build --silent && node dist/src/cli/testnet.js order:live",
+    "testnet:ws:userdata": "npm run build --silent && node dist/src/cli/testnet.js ws:userdata",
+    "testnet:smoke": "npm run build --silent && node dist/src/cli/testnet.js smoke"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
